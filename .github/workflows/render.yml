@@ -1,0 +1,33 @@
+name: render
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['inputs/**']
+concurrency: { group: render, cancel-in-progress: true }
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Decrypt inputs
+        env: { BUNDLE_KEY: '${{ secrets.BUNDLE_KEY }}' }
+        run: |
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BUNDLE_KEY -in inputs/bundle.enc -out /tmp/b.tgz
+          mkdir -p work && tar -xzf /tmp/b.tgz -C work && rm /tmp/b.tgz
+      - name: Tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+          cd work && npm init -y > /dev/null && npm i playwright@1.49.1 > /dev/null && npx playwright install --with-deps chromium > /dev/null
+      - name: Render
+        run: cd work && bash tools/render.sh
+      - name: Encrypt outputs
+        env: { BUNDLE_KEY: '${{ secrets.BUNDLE_KEY }}' }
+        run: |
+          tar -czf /tmp/o.tgz -C work out
+          mkdir -p enc && openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:BUNDLE_KEY -in /tmp/o.tgz -out enc/out.enc
+      - uses: actions/upload-artifact@v4
+        with: { name: out-enc, path: enc/out.enc, retention-days: 14 }
